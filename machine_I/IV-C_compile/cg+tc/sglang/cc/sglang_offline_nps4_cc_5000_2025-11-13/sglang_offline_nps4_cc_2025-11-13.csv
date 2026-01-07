@@ -1,0 +1,5 @@
+model_path,max_num_seqs,successful_requests,total_input_tokens,total_output_tokens,request_throughput,input_token_throughput,output_token_throughput,total_token_throughput,mean_e2e_latency,median_e2e_latency,p25_e2e_latency,p75_e2e_latency,p99_e2e_latency,mean_ttft,median_ttft,p25_ttft,p75_ttft,p99_ttft,mean_tpot,median_tpot,p25_tpot,p75_tpot,p99_tpot,mean_itl,median_itl,p25_itl,p75_itl,p99_itl
+meta-llama/Llama-3.1-8B,32,5000,640000,640000,14.81,1895.81,1895.81,3791.62,167783.34,167181.45,,,,165834.97,165039.45,,,329762.18,,,,,,15.35,14.83,,,34.43
+meta-llama/Llama-3.1-8B,16,5000,640000,640000,8.21,1051.38,1051.38,2102.75,306689.58,306979.43,,,,304868.29,305099.91,,,599943.20,,,,,,14.35,14.16,,,29.33
+meta-llama/Llama-3.1-8B,8,5000,640000,640000,3.54,452.49,452.49,904.97,706447.83,702897.08,,,,704259.95,700665.82,,,1396724.33,,,,,,17.23,17.25,,,29.90
+meta-llama/Llama-3.1-8B,4,5000,640000,640000,1.78,228.33,228.33,456.67,1400572.89,1397683.27,,,,1398382.58,1395513.15,,,2771868.24,,,,,,17.25,17.26,,,30.07

@@ -1,0 +1,6 @@
+model_path,output_len,successful_requests,total_input_tokens,total_output_tokens,request_throughput,input_token_throughput,output_token_throughput,total_token_throughput,mean_e2e_latency,median_e2e_latency,p25_e2e_latency,p75_e2e_latency,p99_e2e_latency,mean_ttft,median_ttft,p25_ttft,p75_ttft,p99_ttft,mean_tpot,median_tpot,p25_tpot,p75_tpot,p99_tpot,mean_itl,median_itl,p25_itl,p75_itl,p99_itl
+Qwen/Qwen3-1.7B,512,4997,639616,2558464,4.00,512.06,2048.26,2560.32,2064.18,2063.90,,,,22.38,21.55,,,33.98,,,,,,4.03,3.83,,,12.93
+Qwen/Qwen3-1.7B,1024,4997,639616,5116928,3.99,511.01,4088.07,4599.08,4854.44,4805.61,,,,23.59,22.70,,,35.54,,,,,,4.74,4.50,,,13.49
+Qwen/Qwen3-1.7B,2048,4997,639616,10233856,3.77,482.58,7721.22,8203.80,37861.77,29908.98,,,,10072.81,6076.24,,,45396.11,,,,,,18.51,10.50,,,17.65
+Qwen/Qwen3-1.7B,4096,4997,639616,20467712,1.03,131.22,4199.00,4330.21,2018515.60,1948712.86,,,,1234713.37,1243393.57,,,2517147.64,,,,,,499.49,10.07,,,16.47
+Qwen/Qwen3-1.7B,8192,4997,639616,40935424,0.28,35.51,2272.39,2307.90,9708418.36,10438141.61,,,,3361730.46,3252595.20,,,7113655.32,,,,,,1213.36,10.67,,,16.55

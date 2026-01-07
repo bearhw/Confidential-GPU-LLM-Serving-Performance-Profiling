@@ -1,0 +1,8 @@
+=== VLLM Benchmark Error Log Wed Nov 26 15:33:23 UTC 2025 ===
+=== Starting benchmark run at Wed Nov 26 15:33:23 UTC 2025 ===
+=== Starting benchmark run at Wed Nov 26 16:01:57 UTC 2025 ===
+=== Starting benchmark run at Wed Nov 26 16:33:11 UTC 2025 ===
+=== Starting benchmark run at Wed Nov 26 17:06:56 UTC 2025 ===
+=== Starting benchmark run at Wed Nov 26 17:46:30 UTC 2025 ===
+[2025-11-26 18:16:43] Benchmark run failed for model meta-llama/Llama-3.1-8B with max_num_seqs 8192
+=== Starting benchmark run at Wed Nov 26 18:16:43 UTC 2025 ===
