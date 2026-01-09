@@ -1,0 +1,5 @@
+model_path,max_num_seqs,mean_noncc,min_noncc,max_noncc,std_dev_noncc,cv_noncc
+meta-llama/Llama-3.1-8B,4,381.48,381.48,381.48,,
+meta-llama/Llama-3.1-8B,8,756.4,756.4,756.4,,
+meta-llama/Llama-3.1-8B,16,1445.42,1445.42,1445.42,,
+meta-llama/Llama-3.1-8B,32,2672.69,2672.69,2672.69,,

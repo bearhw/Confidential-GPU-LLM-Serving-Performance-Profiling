@@ -1,0 +1,5 @@
+model_path,max_num_seqs,mean_cc,min_cc,max_cc,std_dev_cc,cv_cc
+meta-llama/Llama-3.1-8B,4,321.78,321.78,321.78,,
+meta-llama/Llama-3.1-8B,8,669.27,669.27,669.27,,
+meta-llama/Llama-3.1-8B,16,1326.92,1326.92,1326.92,,
+meta-llama/Llama-3.1-8B,32,2421.25,2421.25,2421.25,,
