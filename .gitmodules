@@ -1,0 +1,6 @@
+[submodule "vllm"]
+	path = vllm
+	url = https://github.com/vllm-project/vllm.git
+[submodule "sglang"]
+	path = sglang
+	url = https://github.com/sgl-project/sglang.git
