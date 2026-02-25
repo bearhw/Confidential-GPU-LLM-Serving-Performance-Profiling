@@ -4,70 +4,98 @@ Official artifact for the ISPASS 2026 paper:
 > "An Empirical Study of LLM Serving  in Confidential GPUs"
 
 ---
+# Environment Setup
 
-**1. Tested Environment**
+## 1. Create Conda Environment
 
-The artifact was tested on:
-
-GPU: NVIDIA H100 (80GB) 
-
-Driver: 570.172.08
-
-CUDA: 12.8
-
-PyTorch: 2.x.x+cu121
-
-Python: 3.10
-
-Operating System:
-
-Ubuntu 22.04
-
-
-**3. Repository Structure**
-
-```
-.
-├── machine_A
-├── machine_I
-├── sglang
-└── vllm
+```bash
+cd setup
+conda env create -f environment.yml
+conda activate sglang-vllm-latest
 ```
 
-**4. Setup Instructions**
+---
 
-Step 1: Clone Repository
-git clone --recursive <repo_url>
-cd <repo_name>
+## 2. Verify Installation
 
-If submodules are not initialized:
+```bash
+pip show vllm
+pip show sglang
+```
 
-git submodule update --init --recursive
-Step 2: Create Environment
+---
 
-Using conda:
+## 3. Replace `bench_serving.py`
 
-conda create -n artifact python=3.10
-conda activate artifact
+We use a modified version of SGLang's `bench_serving.py` to report additional metrics (e.g., ITL p75).  
+Replace the original file inside your conda environment:
 
-Install dependencies:
+```bash
+cp bench_serving.py <path_to_conda_env>/site-packages/sglang
+```
 
-pip install -r requirements.txt
-pip install -e ./vllm
-pip install -e ./sglang
+Example:
 
-Verify installation:
+```bash
+cp bench_serving.py /path/to/miniconda3/envs/sglang-vllm-latest/lib/python3.10/site-packages/sglang
+```
 
-python -c "import torch; import vllm; import sglang; print('OK')"
+---
 
+# Running Experiments
 
+```bash
+cd ../scripts
+```
 
-Expected runtime: ~3 hours
+Each directory contains scripts for a specific experimental configuration.
 
+## Experiment Configurations
 
-8. Determinism
+| Directory Name        | LLM Serving Framework | Model(s) Used                               |
+|-----------------------|-----------------------|---------------------------------------------|
+| compile_figure_8      | SGLang, vLLM          | llama3.1-8B                                 |
+| offload_figure_9      | vLLM                  | Qwen2.5-14B                                 |
+| swap_figure_12        | SGLang                | Qwen3-1.7B                                  |
+| chunked_figure11      | SGLang                | llama3.1-8B                                 |
+| offline_figure_5to7   | vLLM, SGLang          | llama3.1-8B, llama3.2-3B, llama3.1-8B-FP8   |
+| online_figure_8       | SGLang                | llama3.1-8B, llama3.2-3B, llama3.1-8B-FP8   |
 
-All experiments use:
+---
+
+## Execute a Script
+
+Enter the desired directory and run:
+
+```bash
+./<script_name>
+```
+
+During execution:
+
+- You will be prompted for your **sudo password** to start and terminate the LLM server process.
+- You will be asked to select a mode:
+  - `cc`
+  - `noncc`
+
+The selected mode determines the output directory name.  
+To change the output directory name manually, modify the `OUTPUT_DIR` variable inside the script.
+
+---
+
+# Output Files
+
+After execution, a result directory will be created containing:
+
+- `*.csv`  
+  Performance metrics recorded per run.
+
+- `*master*.log`  
+  Full terminal output during framework execution.
+
+- `*errors*.log`  
+  Error logs (if any failures occur).
+
 
 Identical batch configurations
 
