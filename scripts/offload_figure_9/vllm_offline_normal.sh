@@ -151,7 +151,7 @@ run_benchmark() {
   rm -f server.pid server.sid
   echo "Starting server..."
   setsid env VLLM_USE_V1=0 python -m vllm.entrypoints.openai.api_server \
-  --model Qwen/Qwen2.5-14B-Instruct \
+  --model "$model_path"\
   --dtype bfloat16 \
  --enforce-eager \
   --kv-cache-dtype fp8 \
