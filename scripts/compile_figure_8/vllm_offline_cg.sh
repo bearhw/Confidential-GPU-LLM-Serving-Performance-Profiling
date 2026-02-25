@@ -158,7 +158,7 @@ COMPILATION_JSON='{"level": 0, "cudagraph_mode": "FULL"}'
 
 setsid env VLLM_TORCH_COMPILE_LEVEL=0 VLLM_DISABLE_COMPILE_CACHE=1 \
 python -m vllm.entrypoints.openai.api_server \
-  --model meta-llama/Llama-3.1-8B-Instruct \
+  --model "$model_path" \
   --disable-log-requests \
   --max_model_len 4096 \
   --max-num-seqs "$max_num_seqs" \
