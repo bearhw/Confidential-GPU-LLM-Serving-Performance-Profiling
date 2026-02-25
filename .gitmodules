@@ -1,0 +1,9 @@
+[submodule "sglang"]
+	path = sglang
+	url = https://github.com/sgl-project/sglang.git
+[submodule "vllm"]
+	path = vllm
+	url = https://github.com/vllm-project/vllm.git
+[submodule "cuda-samples"]
+	path = cuda-samples
+	url = https://github.com/NVIDIA/cuda-samples.git
