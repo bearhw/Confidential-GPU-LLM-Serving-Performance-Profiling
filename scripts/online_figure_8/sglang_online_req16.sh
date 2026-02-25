@@ -47,9 +47,8 @@ echo "=== Chunked Prefill Log $(date) ===" > "$CHUNKED_PREFILL_LOG"
 
 # Array of model paths
 declare -a MODEL_PATHS=(
-#    "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int8"
-#    "Qwen/Qwen2.5-3B"
-#    "Qwen/Qwen2.5-7B"
+    "meta-llama/Llama-3.2-3B"
+    "neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8"
     "meta-llama/Llama-3.1-8B"
 )
 
