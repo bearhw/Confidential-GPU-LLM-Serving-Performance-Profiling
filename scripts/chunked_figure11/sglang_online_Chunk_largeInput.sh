@@ -135,26 +135,6 @@ cleanup_server() {
   echo "✅ cleanup done"
 }
 
-parse_chunked_prefill_logs() {
-    local model_path=$1
-    
-    if [[ ! -f server.log ]]; then
-        echo "Warning: server.log not found, skipping chunked_prefill log parsing"
-        return
-    fi
-    
-    echo "=== Chunked Prefill Logs for $model_path at $(date) ===" >> "$CHUNKED_PREFILL_LOG"
-    
-    # Extract all lines containing "Running chunked_prefill"
-    if grep -F "Running chunked_prefill:" server.log >> "$CHUNKED_PREFILL_LOG" 2>/dev/null; then
-        echo "Parsed chunked_prefill logs from server.log"
-    else
-        echo "No chunked_prefill logs found in server.log" >> "$CHUNKED_PREFILL_LOG"
-    fi
-    
-    echo "" >> "$CHUNKED_PREFILL_LOG"
-}
-
 run_benchmark() {
     local model_path=$1
     
@@ -199,9 +179,6 @@ run_benchmark() {
         rm -f benchmark.log
         return 1
     fi
-
-    # Parse chunked_prefill logs from server.log
-    parse_chunked_prefill_logs "$model_path"
 
     # Append output to master log=
     echo "=== Benchmark Output for $model_path===" >> "$MASTER_LOG"
