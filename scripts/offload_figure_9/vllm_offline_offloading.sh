@@ -41,7 +41,7 @@ echo "=== VLLM Master Log $(date) ===" > "$MASTER_LOG"
 
 # Array of model paths
 declare -a MODEL_PATHS=(
-"meta-llama/Llama-3.1-8B"
+"Qwen/Qwen2.5-14B-Instruct"
 )
 
 declare -a MAX_NUM_SEQUENCES=(512 1024 2048 4096)
@@ -151,7 +151,7 @@ run_benchmark() {
   rm -f server.pid server.sid
   echo "Starting server..."
   setsid env VLLM_USE_V1=0 python -m vllm.entrypoints.openai.api_server \
-  --model Qwen/Qwen2.5-14B-Instruct \
+  --model "$model_path" \
   --dtype bfloat16 \
   --kv-cache-dtype fp8 \
   --max-model-len 4096 \
