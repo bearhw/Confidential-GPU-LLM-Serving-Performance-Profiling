@@ -96,9 +96,3 @@ After execution, a result directory will be created containing:
 - `*errors*.log`  
   Error logs (if any failures occur).
 
-
-Identical batch configurations
-
-Controlled GPU settings
-
-Minor runtime variations may occur due to ....
