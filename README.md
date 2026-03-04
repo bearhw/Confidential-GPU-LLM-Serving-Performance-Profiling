@@ -50,7 +50,7 @@ cp bench_serving.py /path/to/miniconda3/envs/sglang-vllm-latest/lib/python3.10/s
 
 ---
 
-## 4. Prepare Hugging Face Credentials (Required Before Running Scripts)
+## 4. Prepare Hugging Face Credentials
 
 All experiments download models from Hugging Face.  
 Before running any scripts, log in and create your credentials:
