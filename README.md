@@ -98,11 +98,11 @@ Enter the desired directory and run:
 During execution:
 
 - You will be prompted for your **sudo password** to start and terminate the LLM server process.
-- You will be asked to select a mode:
+- You will be asked to select a mode based on your current VM setting:
   - `cc`
   - `noncc`
 
-The selected mode determines the output directory name.  
+The selected mode ONLY determines the output directory name, not the VM setting. To setup VM, follow Step 0.  
 To change the output directory name manually, modify the `OUTPUT_DIR` variable inside the script.
 
 ---
