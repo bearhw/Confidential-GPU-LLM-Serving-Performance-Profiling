@@ -6,6 +6,14 @@ Official artifact for the ISPASS 2026 paper:
 ---
 # Environment Setup
 
+## 0. Set Up the Confidential Computing (CC) VM Environment
+
+For experiments in cc mode, a properly configured Confidential Computing VM environment is required.
+
+Follow the official NVIDIA CC deployment guide to configure the host, VM, GPU driver, and runtime stack:
+
+[NVIDIA CC Deployment Guide] (https://docs.nvidia.com/cc-deployment-guide-tdx.pdf)
+
 ## 1. Create Conda Environment
 
 ```bash
@@ -39,6 +47,22 @@ Example:
 ```bash
 cp bench_serving.py /path/to/miniconda3/envs/sglang-vllm-latest/lib/python3.10/site-packages/sglang
 ```
+
+---
+
+## 4. Prepare Hugging Face Credentials (Required Before Running Scripts)
+
+All experiments download models from Hugging Face.  
+Before running any scripts, log in and create your credentials:
+
+```bash
+huggingface-cli login
+```
+
+In addition, Llama models require individual access approval per model.
+You must visit each model page and request access before running experiments. For example: [Llama 3.1 8B Instruct] (https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct)
+
+After access is approved, the scripts will be able to download the models successfully.
 
 ---
 
