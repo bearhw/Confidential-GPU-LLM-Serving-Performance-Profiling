@@ -4,9 +4,22 @@ Official artifact for the ISPASS 2026 paper:
 > "An Empirical Study of LLM Serving  in Confidential GPUs"
 
 ---
-# Environment Setup
 
-## 0. Set Up the Confidential Computing (CC) VM Environment
+# Background
+
+Confidential Computing (CC) protects data in use by performing gaps in a hardware-based Trusted Execution Environment (TEE). As Large Language Models (LLMs) increasingly handle sensitive information, deploying them on **Confidential GPUs** (e.g., NVIDIA H100 with TEE) has become critical.
+
+However, the hardware abstractions and memory encryption inherent in CC environments introduce performance overheads. This study provides an empirical analysis of these overheads across various serving frameworks (**vLLM, SGLang**) and optimization techniques (e.g., Chunked Prefill, PagedAttention, and Speculative Decoding) to understand the trade-offs between security and performance in LLM serving.
+
+---
+
+# Prerequisites
+
+### Hardware Requirements
+- **GPU**: NVIDIA H100 (Confidential Computing enabled).
+- **CPU**: Host system with TEE support (e.g., AMD SEV-SNP or Intel TDX).
+
+### Software Requirements
 
 For experiments in cc mode, a properly configured Confidential Computing VM environment is required.
 
@@ -14,7 +27,10 @@ Follow the official NVIDIA CC deployment guide to configure the host, VM, GPU dr
 
 [NVIDIA CC Deployment Guide] (https://docs.nvidia.com/cc-deployment-guide-tdx.pdf)
 
-## 1. Create Conda Environment
+---
+# Environment Setup
+
+### 1. Create Conda Environment
 
 ```bash
 cd setup
@@ -24,7 +40,7 @@ conda activate sglang-vllm-latest
 
 ---
 
-## 2. Verify Installation
+### 2. Verify Installation
 
 ```bash
 pip show vllm
@@ -33,24 +49,19 @@ pip show sglang
 
 ---
 
-## 3. Replace `bench_serving.py`
+### 3. Replace `bench_serving.py`
 
 We use a modified version of SGLang's `bench_serving.py` to report additional metrics (e.g., ITL p75).  
 Replace the original file inside your conda environment:
 
 ```bash
-cp bench_serving.py <path_to_conda_env>/site-packages/sglang
-```
-
-Example:
-
-```bash
-cp bench_serving.py /path/to/miniconda3/envs/sglang-vllm-latest/lib/python3.10/site-packages/sglang
+SGLANG_PATH=$(python -c "import sglang; print(sglang.__path__[0])")
+cp bench_serving.py $SGLANG_PATH/
 ```
 
 ---
 
-## 4. Prepare Hugging Face Credentials
+### 4. Prepare Hugging Face Credentials
 
 All experiments download models from Hugging Face.  
 Before running any scripts, log in and create your credentials:
@@ -68,13 +79,15 @@ After access is approved, the scripts will be able to download the models succes
 
 # Running Experiments
 
+### 1. Move to the script directory
+
 ```bash
 cd ../scripts
 ```
 
 Each directory contains scripts for a specific experimental configuration.
 
-## Experiment Configurations
+##### Experiment Configurations
 
 | Directory Name        | LLM Serving Framework | Model(s) Used                               |
 |-----------------------|-----------------------|---------------------------------------------|
@@ -87,7 +100,7 @@ Each directory contains scripts for a specific experimental configuration.
 
 ---
 
-## Execute a Script
+### 2. Execute a Script
 
 Enter the desired directory and run:
 
@@ -120,3 +133,21 @@ After execution, a result directory will be created containing:
 - `*errors*.log`  
   Error logs (if any failures occur).
 
+---
+
+# License
+
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+---
+
+# Citation
+
+```bash
+@inproceedings{xxx,
+  title={An Empirical Study of LLM Serving in Confidential GPUs},
+  author={xx},
+  booktitle={Proceedings of the 2026 IEEE International Symposium on Performance Analysis of Systems and Software (ISPASS)},
+  year={2026}
+}
+```
