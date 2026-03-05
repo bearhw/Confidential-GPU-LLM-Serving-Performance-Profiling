@@ -1,7 +1,8 @@
 
-Official artifact for the ISPASS 2026 paper:
-
-> "An Empirical Study of LLM Serving  in Confidential GPUs"
+This repository is the official artifact for the paper 
+"An Empirical Study of LLM Serving in Confidential GPUs," 
+Eunseong Park, Timo Thans, Vishnu Kumar Kalidasan, 
+Qinghao Hu, and Wenjie Xiong, ISPASS 2026.
 
 ---
 
@@ -16,18 +17,16 @@ However, the hardware abstractions and memory encryption inherent in CC environm
 # Prerequisites
 
 ### Hardware Requirements
-- **GPU**: NVIDIA H100 (Confidential Computing enabled).
 - **CPU**: Host system with TEE support (e.g., AMD SEV-SNP or Intel TDX).
+- **GPU**: NVIDIA GPU.
 
 ### Software Requirements
 
 For experiments in cc mode, a properly configured Confidential Computing VM environment is required.
-
-Follow the official NVIDIA CC deployment guide to configure the host, VM, GPU driver, and runtime stack:
-
-[NVIDIA CC Deployment Guide] (https://docs.nvidia.com/cc-deployment-guide-tdx.pdf)
+Follow the official NVIDIA CC deployment guide to configure the host, VM, GPU driver, and runtime stack: [NVIDIA CC Deployment Guide] (https://docs.nvidia.com/cc-deployment-guide-tdx.pdf)
 
 ---
+
 # Environment Setup
 
 ### 1. Create Conda Environment
@@ -144,10 +143,10 @@ This project is licensed under the MIT License. See the LICENSE file for details
 # Citation
 
 ```bash
-@inproceedings{xxx,
-  title={An Empirical Study of LLM Serving in Confidential GPUs},
-  author={xx},
-  booktitle={Proceedings of the 2026 IEEE International Symposium on Performance Analysis of Systems and Software (ISPASS)},
-  year={2026}
+@inproceedings{park2026confidentialllm,
+  title     = {An Empirical Study of LLM Serving in Confidential GPUs},
+  author    = {Park, Eunseong and Thans, Timo and Kalidasan, Vishnu Kumar and Hu, Qinghao and Xiong, Wenjie},
+  booktitle = {Proceedings of the 2026 IEEE International Symposium on Performance Analysis of Systems and Software (ISPASS)},
+  year      = {2026}
 }
 ```
