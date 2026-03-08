@@ -88,14 +88,15 @@ Each directory contains scripts for a specific experimental configuration.
 
 ##### Experiment Configurations
 
-| Directory Name        | LLM Serving Framework | Model(s) Used                               |
-|-----------------------|-----------------------|---------------------------------------------|
-| compile_figure_8      | SGLang, vLLM          | llama3.1-8B                                 |
-| offload_figure_9      | vLLM                  | Qwen2.5-14B                                 |
-| swap_figure_12        | SGLang                | Qwen3-1.7B                                  |
-| chunked_figure11      | SGLang                | llama3.1-8B                                 |
-| offline_figure_5to7   | vLLM, SGLang          | llama3.1-8B, llama3.2-3B, llama3.1-8B-FP8   |
-| online_figure_8       | SGLang                | llama3.1-8B, llama3.2-3B, llama3.1-8B-FP8   |
+| Directory Name          | LLM Serving Framework | Model(s) Used                               |
+|-------------------------|-----------------------|---------------------------------------------|
+| **figure_04_bandwidth** | NVIDIA CUDA Samples   | Microbenchmark (Host-to-Device/Device-to-Host Bandwidth)             |
+| **figure_05to07_offline**| vLLM, SGLang          | llama3.1-8B, llama3.2-3B, llama3.1-8B-FP8   |
+| **figure_08_compile** | SGLang, vLLM          | llama3.1-8B                                 |
+| **figure_09_offload** | vLLM                  | Qwen2.5-14B                                 |
+| **figure_10_online** | SGLang                | llama3.1-8B, llama3.2-3B, llama3.1-8B-FP8   |
+| **figure_11_chunked** | SGLang                | llama3.1-8B                                 |
+| **figure_12_swap** | SGLang                | Qwen3-1.7B                                  |
 
 ---
 
