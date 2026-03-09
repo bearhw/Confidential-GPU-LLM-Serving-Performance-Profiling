@@ -1,0 +1,683 @@
+❯ What is the mode for torch.compile in vLLM V1? How does it different from SGLang?                                                                                             
+
+● Searched for 17 patterns, read 5 files (ctrl+o to expand)
+
+● Now I have everything I need.
+
+  ---
+  torch.compile: vLLM V1 vs SGLang
+
+  ---
+  vLLM V1
+
+  Default: ON — via optimization_level=O2 (default), which sets mode=VLLM_COMPILE (mode 3).
+
+  # config/vllm.py:817-819
+  if self.compilation_config.mode is None:
+      if self.optimization_level > OptimizationLevel.O0:
+          self.compilation_config.mode = CompilationMode.VLLM_COMPILE  # mode=3
+
+  vLLM has 4 compilation modes:
+
+  ┌──────┬─────────────────────┬─────────────────────────────────────────────┐
+  │ Mode │        Name         │                 Description                 │
+  ├──────┼─────────────────────┼─────────────────────────────────────────────┤
+  │ 0    │ NONE                │ Pure eager, no compilation                  │
+  ├──────┼─────────────────────┼─────────────────────────────────────────────┤
+  │ 1    │ STOCK_TORCH_COMPILE │ Standard torch.compile, whole graph         │
+  ├──────┼─────────────────────┼─────────────────────────────────────────────┤
+  │ 2    │ DYNAMO_TRACE_ONCE   │ Single Dynamo trace, no recompile           │
+  ├──────┼─────────────────────┼─────────────────────────────────────────────┤
+  │ 3    │ VLLM_COMPILE        │ Default — custom piecewise Inductor backend │
+  └──────┴─────────────────────┴─────────────────────────────────────────────┘
+
+  Mode 3 (VLLM_COMPILE) is architecturally unique:
+
+  Full model graph
+          │
+          ▼ Dynamo traces
+   FX Graph (full)
+          │
+          ▼ split at "splitting_ops" (attention ops)
+   [subgraph_0] → [attention] → [subgraph_1] → [attention] → [subgraph_2]
+     compiled           not          compiled         not          compiled
+     by Inductor      compiled      by Inductor     compiled     by Inductor
+          │
+          ▼ Custom passes applied BEFORE Inductor codegen:
+     - fuse_norm_quant  (RMSNorm + FP8 quant)
+     - fuse_act_quant   (SiLU×Mul + FP8 quant)
+     - fuse_allreduce_rms (allreduce + RMSNorm, Hopper/Blackwell only)
+     - eliminate_noops
+     - combo_kernels    (horizontal fusion, e.g. QK-norm + rope)
+
+  Inductor configuration for single-size batches:
+  # compiler_interface.py:679-682
+  config["max_autotune"] = envs.VLLM_ENABLE_INDUCTOR_MAX_AUTOTUNE  # True by default
+  config["coordinate_descent_tuning"] = ...  # True by default
+
+  CUDAGraph mode (default FULL_AND_PIECEWISE):
+  - Decode batches → FULL CUDAGraph (whole step captured)
+  - Prefill/mixed batches → PIECEWISE CUDAGraph (only non-attention subgraphs captured)
+
+  Dynamic shapes: DynamicShapesType.BACKED by default — Dynamo traces once, drops shape guards, compiled graph runs for any size.
+
+  ---
+  SGLang
+
+  Default: OFF — enable_torch_compile=False in ServerArgs.
+
+  When enabled (--enable-torch-compile):
+
+  # cuda_graph_runner.py:134-140
+  yield torch.compile(
+      torch.no_grad()(model.forward),
+      mode=os.environ.get("SGLANG_TORCH_COMPILE_MODE", "max-autotune-no-cudagraphs"),
+      dynamic=False,
+  )
+
+  Single mode: max-autotune-no-cudagraphs (standard PyTorch mode, no custom backend).
+
+  # cuda_graph_runner.py:149-162 — set_torch_compile_config()
+  torch._inductor.config.coordinate_descent_tuning = True
+  torch._inductor.config.triton.unique_kernel_names = True
+  torch._inductor.config.fx_graph_cache = True
+  torch._dynamo.config.cache_size_limit = 1024
+
+  Only applies to batch sizes ≤ torch_compile_max_bs (default 32):
+  compile_bs = [1, 2, 4, ..., 32]   # compiled
+  capture_bs = [1, 2, 4, ..., 160]  # cuda-graph captured (all sizes)
+  Sizes above 32 run without torch.compile even when enabled.
+
+  ---
+  Side-by-Side Comparison
+
+  ┌────────────────────┬───────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────┐
+  │     Dimension      │                      vLLM V1                      │                                            SGLang                                             │
+  ├────────────────────┼───────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Default state      │ ON (at O2)                                        │ OFF (opt-in)                                                                                  │
+  ├────────────────────┼───────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Compilation mode   │ VLLM_COMPILE (custom piecewise Inductor)          │ max-autotune-no-cudagraphs (stock PyTorch)                                                    │
+  ├────────────────────┼───────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Graph scope        │ Piecewise — splits at attention, compiles         │ Whole model forward (single graph)                                                            │
+  │                    │ surrounding subgraphs                             │                                                                                               │
+  ├────────────────────┼───────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Attention handling │ Excluded from compiled subgraph (splitting_ops)   │ Included in compiled graph                                                                    │
+  ├────────────────────┼───────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Custom IR passes   │ Yes — norm fusion, quant fusion, allreduce        │ No — relies on Inductor's built-in passes only                                                │
+  │                    │ fusion, etc.                                      │                                                                                               │
+  ├────────────────────┼───────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ max_autotune       │ Yes, for single-size shapes                       │ Yes, always (max-autotune-...)                                                                │
+  ├────────────────────┼───────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ dynamic            │ Not set (backed dynamic shapes)                   │ dynamic=False (fully static)                                                                  │
+  ├────────────────────┼───────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ CUDAGraph          │ Orthogonal — FULL+PIECEWISE cudagraphs on top of  │ Separate — -no-cudagraphs explicitly disables torch.compile's internal CUDA graph; SGLang     │
+  │ relationship       │ compiled subgraphs                                │ manages graphs via its own CudaGraphRunner                                                    │
+  ├────────────────────┼───────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Batch size         │ All captured cudagraph sizes                      │ Only ≤ torch_compile_max_bs (default 32)                                                      │
+  │ coverage           │                                                   │                                                                                               │
+  ├────────────────────┼───────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Backend            │ Custom VllmInductorBackend                        │ Stock inductor                                                                                │
+  └────────────────────┴───────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  Key Architectural Difference
+
+  The fundamental split is who manages CUDA graphs:
+
+  - vLLM: torch.compile (VLLM_COMPILE) and CUDA graph capture are co-designed — piecewise compilation produces subgraphs that are precisely what gets captured in CUDA graphs.
+  They work together.
+  - SGLang: torch.compile and CUDA graphs are independent layers — SGLang's CudaGraphRunner captures the CUDA graph at the Python level, and optionally torch.compile (with
+  -no-cudagraphs) optimizes the Triton kernels inside that graph without interfering with the outer capture. The -no-cudagraphs suffix is explicitly to prevent torch.compile
+  from trying to manage CUDA graphs internally while SGLang does so externally, which would conflict.
+
+❯ Compare vLLM and SGLang in a way they transmit the data. Does vLLM has more efficiency since it uses a dedicated cuda stream and reusing cpu buffer other than tolist?        
+
+● This is a great question. The answer is no — vLLM's better transfer mechanism is outweighed by SGLang's much smaller transfer volume. Let me break it down precisely.
+
+  ---
+  The Two Dimensions of Transfer Efficiency
+
+  1. Transfer Mechanism — how data moves (vLLM's strength)
+  2. Transfer Volume — how much data moves (SGLang's strength)
+
+  ---
+  CPU → GPU: Mechanism vs Volume
+
+  vLLM's mechanism advantages:
+
+  - Pre-allocated pinned CPU buffers reused every step — no malloc/free, DMA engine can read directly without staging
+  - non_blocking=True with prepare_inputs_event — CPU continues scheduling while DMA runs
+  - Zero Python allocation overhead
+
+  SGLang's mechanism disadvantages:
+
+  - Creates new CPU tensors every step: torch.tensor(python_list, dtype=...).to(device, non_blocking=True)
+  - Incurs Python list → tensor allocation cost each step
+  - Still non_blocking=True, so DMA is async, but with fresh allocations
+
+  But look at the volumes:
+
+  ┌──────────────┬────────────────────────────────────┬─────────────────────────┐
+  │              │            vLLM Decode             │      SGLang Decode      │
+  ├──────────────┼────────────────────────────────────┼─────────────────────────┤
+  │ input_ids    │ [2048] int32 = 8 KB (CPU→GPU)      │ 0 B (GPU tensor reused) │
+  ├──────────────┼────────────────────────────────────┼─────────────────────────┤
+  │ block table  │ [2048, 256] int32 = 2 MB (CPU→GPU) │ 0 B (GPU-resident)      │
+  ├──────────────┼────────────────────────────────────┼─────────────────────────┤
+  │ slot_mapping │ [2048] int64 = 16 KB (CPU→GPU)     │ 0 B (Triton kernel)     │
+  ├──────────────┼────────────────────────────────────┼─────────────────────────┤
+  │ seq_lens     │ [2048] int32 = 8 KB (CPU→GPU)      │ 8 KB (CPU→GPU)          │
+  ├──────────────┼────────────────────────────────────┼─────────────────────────┤
+  │ Total        │ ~2.1 MB                            │ ~8 KB                   │
+  └──────────────┴────────────────────────────────────┴─────────────────────────┘
+
+  On PCIe 4.0 x16 (~25 GB/s practical):
+  - vLLM block table DMA alone: 2 MB ÷ 25 GB/s ≈ 80 μs
+  - SGLang total: 8 KB ÷ 25 GB/s ≈ 0.3 μs
+
+  vLLM's pinned memory and async streams can at best optimize the transfer time of those 2 MB, not eliminate it. The prepare_inputs_event mechanism means the CPU doesn't block
+  — but the DMA engine still spends ~80 μs every decode step moving the block table. No amount of stream optimization can make 2 MB faster than 8 KB.
+
+  ---
+  GPU → CPU: vLLM Has a Real Advantage Here
+
+  vLLM (async mode):
+
+  GPU forward pass (stream 0)
+         │
+         ├──► async_output_copy_stream.wait_stream(stream 0)
+         │         sampled_tokens.to("cpu", non_blocking=True)  ← runs in background
+         │
+         └──► CPU: schedule next batch immediately
+                   (tolist() consumed later, already done)
+
+  SGLang:
+
+  GPU forward pass
+         │
+         └──► next_token_ids.tolist()   ← BLOCKING SYNC
+                    │
+                    └──► CPU: schedule next batch
+
+  .tolist() forces a full CPU-GPU synchronization — the CPU stalls waiting for:
+  1. GPU to finish the forward pass
+  2. Data to be copied to CPU
+  3. Converted to Python list
+
+  vLLM's async stream genuinely overlaps this copy with the next step's CPU scheduling work. This is vLLM's real, meaningful advantage — it hides the GPU→CPU latency inside the
+   CPU scheduling time.
+
+  However, both sides transfer tiny output tensors (~8-16 KB), so the absolute time saved is small (< 1 μs DMA + sync overhead).
+
+  ---
+  Net Verdict
+
+  ┌──────────────────────────────────────────┬────────────────┬────────────────────────┬───────────────┐
+  │                Dimension                 │      vLLM      │         SGLang         │    Winner     │
+  ├──────────────────────────────────────────┼────────────────┼────────────────────────┼───────────────┤
+  │ CPU→GPU mechanism (pinned, async, reuse) │ ✅ Better      │ ❌ New alloc each step │ vLLM          │
+  ├──────────────────────────────────────────┼────────────────┼────────────────────────┼───────────────┤
+  │ CPU→GPU volume (decode)                  │ ❌ 2.1 MB      │ ✅ 8 KB                │ SGLang (262×) │
+  ├──────────────────────────────────────────┼────────────────┼────────────────────────┼───────────────┤
+  │ GPU→CPU mechanism (async stream)         │ ✅ Truly async │ ❌ Blocking .tolist()  │ vLLM          │
+  ├──────────────────────────────────────────┼────────────────┼────────────────────────┼───────────────┤
+  │ GPU→CPU volume                           │ ❌ 16 KB       │ ✅ 8 KB                │ SGLang        │
+  ├──────────────────────────────────────────┼────────────────┼────────────────────────┼───────────────┤
+  │ Overall decode bandwidth                 │ ~2.1 MB/step   │ ~8 KB/step             │ SGLang        │
+  └──────────────────────────────────────────┴────────────────┴────────────────────────┴───────────────┘
+
+  SGLang wins overall, because the volume difference (262×) completely dominates the mechanism difference (~10–20% improvement from pinned/async). vLLM's streaming
+  optimizations are micro-optimizations applied to a macro problem (large block table transfers).
+
+  vLLM's one genuine pipelining advantage is the async GPU→CPU output copy — it hides GPU→CPU latency inside CPU scheduling. SGLang's .tolist() stalls the pipeline every step.
+  But since both transfer only ~8-16 KB of output, the absolute latency difference is negligible (< 1 μs).
+
+  The root cause of vLLM's bandwidth problem is architectural: copying the entire block table every step regardless of what changed. SGLang avoids this entirely by making the
+  KV cache index (req_to_token) a GPU-resident structure and using Triton kernels to build attention metadata directly on the GPU.
+
+
+  ---
+  SGLang CPU ↔ GPU Data Transfer Analysis
+
+  Setup & Assumptions
+
+  ┌────────────────────────┬──────────────────┐
+  │       Parameter        │      Value       │
+  ├────────────────────────┼──────────────────┤
+  │ max-running-requests   │ 2,048            │
+  ├────────────────────────┼──────────────────┤
+  │ max-prefill-tokens     │ 8,192            │
+  ├────────────────────────┼──────────────────┤
+  │ input_len / output_len │ 128 / 128 tokens │
+  ├────────────────────────┼──────────────────┤
+  │ num-prompts            │ 5,000            │
+  └────────────────────────┴──────────────────┘
+
+  Batch sizing:
+  - Prefill: min(8192/128, 2048) = 64 reqs/batch, 8,192 tokens
+  - Decode (peak): 2,048 reqs, 2,048 tokens (1 token/req)
+
+  All transfers use .to(device, non_blocking=True). There are no pre-allocated pinned CPU buffers like vLLM — tensors are freshly created on CPU and transferred each step.
+
+  ---
+  1. CPU → GPU
+
+  1-1. Prefill (64 reqs, 8,192 tokens)
+
+  Source: schedule_batch.py::prepare_for_extend() + forward_batch_info.py::init_new()
+
+  ┌──────────────────────┬─────────┬───────┬────────┐
+  │        Tensor        │  Shape  │ dtype │  Size  │
+  ├──────────────────────┼─────────┼───────┼────────┤
+  │ input_ids            │ [8,192] │ int64 │ 64 KB  │
+  ├──────────────────────┼─────────┼───────┼────────┤
+  │ req_pool_indices     │ [64]    │ int64 │ 512 B  │
+  ├──────────────────────┼─────────┼───────┼────────┤
+  │ seq_lens             │ [64]    │ int64 │ 512 B  │
+  ├──────────────────────┼─────────┼───────┼────────┤
+  │ orig_seq_lens        │ [64]    │ int32 │ 256 B  │
+  ├──────────────────────┼─────────┼───────┼────────┤
+  │ prefix_lens          │ [64]    │ int64 │ 512 B  │
+  ├──────────────────────┼─────────┼───────┼────────┤
+  │ extend_seq_lens      │ [64]    │ int32 │ 256 B  │
+  ├──────────────────────┼─────────┼───────┼────────┤
+  │ extend_prefix_lens   │ [64]    │ int32 │ 256 B  │
+  ├──────────────────────┼─────────┼───────┼────────┤
+  │ num_token_non_padded │ scalar  │ int32 │ 4 B    │
+  ├──────────────────────┼─────────┼───────┼────────┤
+  │ Total                │         │       │ ~66 KB │
+  └──────────────────────┴─────────┴───────┴────────┘
+
+  - out_cache_loc (KV slot indices): already a GPU tensor — returned directly from token_to_kv_pool_allocator.alloc() which operates on GPU-resident free lists.
+  - positions: computed on GPU via compute_position() using the already-transferred extend_seq_lens and extend_prefix_lens.
+  - kv_indptr / kv_indices / kv_last_page_len: built on GPU by the Triton kernel create_flashinfer_kv_indices_triton() from the GPU-resident req_to_token pool.
+
+  1-2. Decode (2,048 reqs, 2,048 tokens)
+
+  Source: schedule_batch.py::prepare_for_decode()
+
+  ┌──────────────────────────┬─────────┬───────┬───────┐
+  │          Tensor          │  Shape  │ dtype │ Size  │
+  ├──────────────────────────┼─────────┼───────┼───────┤
+  │ seq_lens (for kv_indptr) │ [2,048] │ int32 │ 8 KB  │
+  ├──────────────────────────┼─────────┼───────┼───────┤
+  │ Total                    │         │       │ ~8 KB │
+  └──────────────────────────┴─────────┴───────┴───────┘
+
+  This 8 KB comes from seq_lens_cpu (Python list) → paged_kernel_lens GPU tensor (torch.tensor(seq_lens_cpu, dtype=torch.int32, device="cuda")) inside init_flashinfer_args(),
+  used to compute kv_indptr via torch.cumsum().
+
+  Everything else is zero-copy:
+  - input_ids = batch.output_ids — the GPU tensor from the previous step's sampler output assigned directly (batch.output_ids = next_token_ids at scheduler.py:1838) — no CPU
+  roundtrip.
+  - seq_lens — incremented in-place on GPU: self.seq_lens.add_(1).
+  - out_cache_loc — allocated directly as GPU tensor via alloc_token_slots().
+  - positions — computed on GPU from seq_lens.
+  - kv_indptr / kv_indices — updated by Triton kernel from GPU-resident req_to_token pool ([2048, max_context_len] int32).
+  - CUDA graph copies (input_ids, seq_lens, out_cache_loc, positions, req_pool_indices) are all GPU→GPU scatter into the static graph buffers.
+
+  ---
+  2. GPU → CPU
+
+  2-1. Prefill Output
+
+  ┌────────────────┬───────┬───────────────────┬───────┐
+  │     Tensor     │ Shape │       dtype       │ Size  │
+  ├────────────────┼───────┼───────────────────┼───────┤
+  │ next_token_ids │ [64]  │ int32 → list[int] │ 256 B │
+  └────────────────┴───────┴───────────────────┴───────┘
+
+  Via .tolist() at scheduler_output_processor_mixin.py:59.
+
+  2-2. Decode Output
+
+  ┌────────────────┬─────────┬───────────────────┬──────┐
+  │     Tensor     │  Shape  │       dtype       │ Size │
+  ├────────────────┼─────────┼───────────────────┼──────┤
+  │ next_token_ids │ [2,048] │ int32 → list[int] │ 8 KB │
+  └────────────────┴─────────┴───────────────────┴──────┘
+
+  Via .tolist() at scheduler_output_processor_mixin.py:216.
+
+  ---
+  Architectural Contrast: SGLang vs vLLM
+
+  ┌────────────────┬─────────────────────────────────────────────┬──────────────────────────────────────────────────────┐
+  │                │           vLLM Decode (per step)            │               SGLang Decode (per step)               │
+  ├────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+  │ block table    │ [2048, 256] int32 = 2 MB (explicit CPU→GPU) │ 0 B — req_to_token is GPU-resident, updated in-place │
+  ├────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+  │ input_ids      │ [2048] int32 = 8 KB (explicit CPU→GPU)      │ 0 B — GPU tensor reused directly                     │
+  ├────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+  │ seq_lens       │ [2048] int32 = 8 KB (explicit CPU→GPU)      │ 8 KB (for kv_indptr computation only)                │
+  ├────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+  │ slot_mapping   │ [2048] int64 = 16 KB (explicit CPU→GPU)     │ 0 B — Triton kernel computes kv_indices on GPU       │
+  ├────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+  │ sampled tokens │ [2048,1] int64 = 16 KB                      │ [2048] int32 = 8 KB                                  │
+  ├────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+  │ Total CPU→GPU  │ ~2.1 MB                                     │ ~8 KB                                                │
+  ├────────────────┼─────────────────────────────────────────────┼──────────────────────────────────────────────────────┤
+  │ Total GPU→CPU  │ ~16 KB                                      │ ~8 KB                                                │
+  └────────────────┴─────────────────────────────────────────────┴──────────────────────────────────────────────────────┘
+
+  The 262× difference in CPU→GPU bandwidth comes from two key SGLang design decisions:
+  1. GPU-resident req_to_token pool ([max_running_requests, max_context_len] int32, updated via GPU scatter ops) — eliminates the block table transfer entirely.
+  2. GPU tensor reuse for input_ids — sampler output (batch.output_ids) is assigned directly as the next step's input_ids without ever leaving the GPU.
+
+  ---
+  vLLM CPU ↔ GPU Data Transfer Analysis
+
+  Setup & Assumptions
+
+  ┌─────────────────────────────────────┬─────────────────────┐
+  │              Parameter              │        Value        │
+  ├─────────────────────────────────────┼─────────────────────┤
+  │ max_num_seqs (= max_num_reqs)       │ 2,048               │
+  ├─────────────────────────────────────┼─────────────────────┤
+  │ max_num_batched_tokens              │ 8,192               │
+  ├─────────────────────────────────────┼─────────────────────┤
+  │ input_len / output_len              │ 128 / 128 tokens    │
+  ├─────────────────────────────────────┼─────────────────────┤
+  │ num_prompts                         │ 5,000               │
+  ├─────────────────────────────────────┼─────────────────────┤
+  │ block_size (default FlashAttention) │ 16 tokens           │
+  ├─────────────────────────────────────┼─────────────────────┤
+  │ max_model_len (e.g., LLaMA-2)       │ 4,096 tokens        │
+  ├─────────────────────────────────────┼─────────────────────┤
+  │ max_num_blocks_per_req              │ ceil(4096/16) = 256 │
+  └─────────────────────────────────────┴─────────────────────┘
+
+  Batch sizing:
+  - Prefill: min(8192/128, 2048) = 64 reqs/batch, 8,192 tokens total
+  - Decode (peak): 2,048 reqs/batch (1 token/req), 2,048 tokens total
+
+  All transfers use CpuGpuBuffer.copy_to_gpu() → gpu[:n].copy_(cpu[:n], non_blocking=True).
+
+  ---
+  1. CPU → GPU
+
+  1-1. Prefill (64 reqs, 8,192 tokens per batch)
+
+  ┌──────────────────────┬───────────┬───────┬─────────┐
+  │        Tensor        │   Shape   │ dtype │  Size   │
+  ├──────────────────────┼───────────┼───────┼─────────┤
+  │ input_ids            │ [8,192]   │ int32 │ 32 KB   │
+  ├──────────────────────┼───────────┼───────┼─────────┤
+  │ positions            │ [8,192]   │ int64 │ 64 KB   │
+  ├──────────────────────┼───────────┼───────┼─────────┤
+  │ query_start_loc      │ [65]      │ int32 │ 260 B   │
+  ├──────────────────────┼───────────┼───────┼─────────┤
+  │ seq_lens             │ [64]      │ int32 │ 256 B   │
+  ├──────────────────────┼───────────┼───────┼─────────┤
+  │ discard_request_mask │ [64]      │ bool  │ 64 B    │
+  ├──────────────────────┼───────────┼───────┼─────────┤
+  │ block_table ★        │ [64, 256] │ int32 │ 64 KB   │
+  ├──────────────────────┼───────────┼───────┼─────────┤
+  │ slot_mapping         │ [8,192]   │ int64 │ 64 KB   │
+  ├──────────────────────┼───────────┼───────┼─────────┤
+  │ Total                │           │       │ ~224 KB │
+  └──────────────────────┴───────────┴───────┴─────────┘
+
+  ★ block_table copies all 256 columns per row (commit_block_table(num_reqs) → full row copy), even though only 8 blocks/req are populated at prefill time (ceil(128/16)=8). 248
+   columns are wasted bandwidth.
+
+  1-2. Decode (2,048 reqs, 2,048 tokens per batch — peak)
+
+  ┌──────────────────────┬──────────────┬───────┬─────────────────┐
+  │        Tensor        │    Shape     │ dtype │      Size       │
+  ├──────────────────────┼──────────────┼───────┼─────────────────┤
+  │ input_ids            │ [2,048]      │ int32 │ 8 KB            │
+  ├──────────────────────┼──────────────┼───────┼─────────────────┤
+  │ positions            │ [2,048]      │ int64 │ 16 KB           │
+  ├──────────────────────┼──────────────┼───────┼─────────────────┤
+  │ query_start_loc      │ [2,049]      │ int32 │ 8 KB            │
+  ├──────────────────────┼──────────────┼───────┼─────────────────┤
+  │ seq_lens             │ [2,048]      │ int32 │ 8 KB            │
+  ├──────────────────────┼──────────────┼───────┼─────────────────┤
+  │ discard_request_mask │ [2,048]      │ bool  │ 2 KB            │
+  ├──────────────────────┼──────────────┼───────┼─────────────────┤
+  │ block_table ★★       │ [2,048, 256] │ int32 │ 2,048 KB (2 MB) │
+  ├──────────────────────┼──────────────┼───────┼─────────────────┤
+  │ slot_mapping         │ [2,048]      │ int64 │ 16 KB           │
+  ├──────────────────────┼──────────────┼───────┼─────────────────┤
+  │ Total                │              │       │ ~2.1 MB         │
+  └──────────────────────┴──────────────┴───────┴─────────────────┘
+
+  ★★ block_table dominates completely. At decode step 128 (end of generation), each request uses only ceil(256/16)=16 blocks, yet all 256 columns are transferred. That's 93.75%
+   wasted bandwidth in the block table alone.
+
+  ---
+  2. GPU → CPU
+
+  Mechanism: GPU sampler writes token IDs → pinned CPU buffer via .copy_(non_blocking=True) + CUDA event sync → .tolist().
+
+  2-1. Prefill Output
+
+  ┌───────────────────┬─────────┬───────┬───────┐
+  │      Tensor       │  Shape  │ dtype │ Size  │
+  ├───────────────────┼─────────┼───────┼───────┤
+  │ sampled_token_ids │ [64, 1] │ int64 │ 512 B │
+  ├───────────────────┼─────────┼───────┼───────┤
+  │ Total             │         │       │ 512 B │
+  └───────────────────┴─────────┴───────┴───────┘
+
+  Only the last token of each prefill sequence is sampled and returned. Negligible.
+
+  2-2. Decode Output
+
+  ┌───────────────────┬────────────┬───────┬───────┐
+  │      Tensor       │   Shape    │ dtype │ Size  │
+  ├───────────────────┼────────────┼───────┼───────┤
+  │ sampled_token_ids │ [2,048, 1] │ int64 │ 16 KB │
+  ├───────────────────┼────────────┼───────┼───────┤
+  │ Total             │            │       │ 16 KB │
+  └───────────────────┴────────────┴───────┴───────┘
+
+  Each of the 2,048 active requests produces one token per decode step.
+
+  ---
+  Benchmark-Scale Totals (5,000 prompts)
+
+  ┌─────────┬────────────────────────────────────┬───────────────────┬───────────────────┐
+  │  Phase  │              Batches               │ Per-batch CPU→GPU │ Per-batch GPU→CPU │
+  ├─────────┼────────────────────────────────────┼───────────────────┼───────────────────┤
+  │ Prefill │ ceil(5000/64) = 79                 │ ~224 KB           │ 512 B             │
+  ├─────────┼────────────────────────────────────┼───────────────────┼───────────────────┤
+  │ Decode  │ (5000×128)/2048 ≈ 313 full batches │ ~2.1 MB           │ 16 KB             │
+  └─────────┴────────────────────────────────────┴───────────────────┴───────────────────┘
+
+  ┌───────────┬───────────────────────┬───────────────────────┬─────────────┐
+  │ Direction │    Total (prefill)    │    Total (decode)     │ Grand Total │
+  ├───────────┼───────────────────────┼───────────────────────┼─────────────┤
+  │ CPU → GPU │ 79 × 224 KB ≈ 17.3 MB │ 313 × 2.1 MB ≈ 657 MB │ ~675 MB     │
+  ├───────────┼───────────────────────┼───────────────────────┼─────────────┤
+  │ GPU → CPU │ 79 × 512 B ≈ 40 KB    │ 313 × 16 KB ≈ 5 MB    │ ~5 MB       │
+  └───────────┴───────────────────────┴───────────────────────┴─────────────┘
+
+  ---
+  Key Observations
+
+  1. Block table is the dominant transfer during decode: 2 MB per step vs. ~58 KB for all other tensors combined. This scales with max_num_reqs × max_num_blocks_per_req × 4
+  bytes.
+  2. GPU→CPU is asymmetric and tiny: Only sampled token IDs are returned (~16 KB/step decode, negligible prefill). The model logits (GBs) are consumed entirely on-GPU by the
+  sampler.
+  3. Prefill is transfer-light relative to decode: ~224 KB/batch for prefill vs. ~2.1 MB/batch for decode. The block_table at prefill time is 64× smaller than at decode peak.
+  4. Async mode optimization: With --enable-async-output-proc, sampled token IDs are transferred on a separate CUDA stream (output_proc_stream) via pinned memory, overlapping
+  with the next forward pass.
+  5. Input embeddings (if --prompt-adapter or multimodal): additional [8192, hidden_size] float16/bfloat16 tensor per prefill batch — e.g., for hidden_size=4096: 64 MB/batch —
+  but absent in standard text benchmarks.
+
+❯ What are differences between  Inductor-generated Triton kernels (autotuned) and Hand-written CUDA/Triton custom ops? Can Inductor-generated Triton kernels (autotuned) be     
+less efficient?                                                                                                                                                                 
+                                                                                                                                                                                
+● This is a deep question. Let me look at concrete examples in the SGLang codebase first, then explain the architectural differences.                                           
+                                                                      
+● Searched for 3 patterns, read 2 files (ctrl+o to expand)     
+                                                                                                                                                                                
+● Bash(grep -rn "silu_and_mul\|rmsnorm\|fused_add_rmsnorm" /root/miniconda3/envs/sglang-vllm-latest/lib/python3.10/site-packages/sglang/srt/layers/layernorm.py | head…)
+  ⎿  47:        from flashinfer.norm import fused_add_rmsnorm                                                                                                                   
+     49:        from sgl_kernel import fused_add_rmsnorm              
+     50:    from sgl_kernel import gemma_fused_add_rmsnorm, gemma_rmsnorm, rmsnorm                                                                                              
+     … +7 lines (ctrl+o to expand)                                                                                                                                              
+                                                                                                                                                                                
+● Now I have concrete code to illustrate this clearly.                                                                                                                          
+                                                                                                                                                                      
+  ---                                                                                                                                                                           
+  Inductor-Generated vs Hand-Written Custom Kernels                                                                                                                             
+                                                                                                                                                                                
+  Concrete Example: RMSNorm with Residual                                                                                                                                       
+                                                                                                                                                                                
+  Hand-written (forward_cuda) — calls fused_add_rmsnorm from sgl_kernel/flashinfer:                                                                                             
+  One CUDA kernel launch:                                                                                                                                                       
+    READ:  x[N, H], residual[N, H], weight[H]    (2N·H + H elements)                                                                                                            
+    DO:    x += residual  (fused in registers)                                                                                                                                  
+           variance = mean(x²) over H                                                                                                                                           
+           x = x / sqrt(variance + ε) * weight   (fused in registers)                                                                                                           
+    WRITE: x[N, H], residual[N, H]               (2N·H elements)                                                                                                                
+    HBM round trips: 1                                                                                                                                                          
+                                                                                                                                                                                
+  Native (forward_native) — standard PyTorch ops:                                                                                                                               
+  x = x.to(torch.float32)           # kernel 1: type cast, write temp                                                                                                           
+  x = x + residual.to(torch.float32)  # kernel 2: cast + add, write temp                                                                                                        
+  residual = x.to(orig_dtype)        # kernel 3: cast, write temp                                                                                                               
+  variance = (x**2).mean(-1)         # kernel 4: square + reduce, write temp                                                                                                    
+  x = x * torch.rsqrt(variance+eps)  # kernel 5: div, write temp                                                                                                                
+  out = (x * self.weight).to(dtype)  # kernel 6: scale + cast, write                                                                                                            
+  # 6+ separate kernel launches, 6+ HBM round trips                                                                                                                             
+                                                                                                                                                                                
+  With Inductor (forward_native + torch.compile):                                                                                                                               
+  Inductor fuses these into 1-2 Triton kernels — closing most of the gap. But the hand-written kernel still has advantages described below.                                     
+                                                                                                                                                                                
+  ---                                                                                                                                                                           
+  Concrete Example: SiluAndMul                                                                                                                                                  
+                                                                                                                                                                                
+  ┌─────────────────────────────┬────────────────────────────────────────────┬────────────────────────────┬───────────┐
+  │                             │                    Code                    │      Kernel launches       │ HBM reads │                                                         
+  ├─────────────────────────────┼────────────────────────────────────────────┼────────────────────────────┼───────────┤                                                         
+  │ forward_cuda                │ silu_and_mul(x, out) — single fused kernel │ 1                          │ x once    │                                                         
+  ├─────────────────────────────┼────────────────────────────────────────────┼────────────────────────────┼───────────┤                                                         
+  │ forward_native (no compile) │ F.silu(x[:d]) * x[d:]                      │ 3 (slice+silu, slice, mul) │ x 2-3x    │                                                         
+  ├─────────────────────────────┼────────────────────────────────────────────┼────────────────────────────┼───────────┤                                                         
+  │ forward_native + Inductor   │ fused Triton                               │ 1                          │ x once    │                                                         
+  └─────────────────────────────┴────────────────────────────────────────────┴────────────────────────────┴───────────┘                                                         
+                  
+  ---
+  The 5 Core Differences
+                                                                                                                                                                                
+  1. In-Place Memory Semantics
+                                                                                                                                                                                
+  Hand-written kernels often write back into the input buffer:                                                                                                                  
+  // fused_add_rmsnorm — operates in-place on x and residual                                                                                                                    
+  x[i] = (x[i] + residual[i]) / rms * weight[i];  // no extra allocation                                                                                                        
+  residual[i] = x[i] + residual[i];               // updated in-place   
+                                                                                                                                                                                
+  Inductor's autograd safety model cannot generate in-place writes to inputs by default — it creates new output tensors. This adds one extra HBM write per fused op, which at   
+  memory-bandwidth-bound batch sizes (decode, small bs) is a real cost.                                                                                                         
+                                                                                                                                                                                
+  2. Hardware-Specific Vectorization                                                                                                                                            
+                  
+  Hand-written kernels use architecture-specific intrinsics:                                                                                                                    
+  // Custom RMSNorm: vectorized 8 elements per thread for H100
+  float8 x_vec = *reinterpret_cast<float8*>(x + i);  // vectorized load                                                                                                         
+                                                                                                                                                                                
+  Inductor generates generic Triton that uses autotuning to find the right vectorization width. It usually gets close but may miss optimal configs for specific shapes like     
+  hidden_size=4096 at bs=1.                                                                                                                                                     
+                                                                                                                                                                                
+  3. Algorithm vs. Kernel Optimization                                                                                                                                          
+                  
+  This is the most important case. Some custom kernels don't just fuse operations — they implement a fundamentally different algorithm:                                         
+   
+  FlashAttention custom kernel:                                                                                                                                                 
+    Algorithm: Online softmax with IO-aware tiling
+    - Never materializes the full [seq_len, seq_len] attention matrix
+    - Reads Q/K/V in tiles, computes running max/sum                                                                                                                            
+    - O(seq_len) HBM usage instead of O(seq_len²)                                                                                                                               
+                                                                                                                                                                                
+  Inductor's generated kernel:                                                                                                                                                  
+    Algorithm: Standard attention                                                                                                                                               
+    - Computes full scores = Q @ K.T              → writes [seq_len, seq_len] to HBM                                                                                            
+    - Softmax(scores)                             → reads + writes [seq_len, seq_len]                                                                                           
+    - output = softmax @ V                        → reads [seq_len, seq_len]                                                                                                    
+    - HBM usage: O(seq_len²) — completely different complexity class                                                                                                            
+                                                                                                                                                                                
+  Inductor cannot invent FlashAttention. This is why SGLang's attention stays on forward_cuda regardless.                                                                       
+                                                                                                                                                                                
+  4. Cross-Layer Fusion                                                                                                                                                         
+                  
+  Hand-written kernels can encode domain knowledge across layer boundaries:                                                                                                     
+  Custom: AllReduce + RMSNorm fused kernel
+    - Starts norm computation while AllReduce data is arriving                                                                                                                  
+    - Overlaps communication with computation                                                                                                                                   
+    - 1 synchronization point                                                                                                                                                   
+                                                                                                                                                                                
+  Inductor: sees AllReduce as opaque, cannot fuse across it                                                                                                                     
+    - AllReduce completes → barrier → RMSNorm starts                                                                                                                            
+    - 2 separate phases                                                                                                                                                         
+                                                                                                                                                                                
+  5. Tuning Search Space                                                                                                                                                        
+                                                                                                                                                                                
+  Hand-written: single manually-benchmarked config                                                                                                                              
+    - Engineer ran nsight, profiled at hidden_size=4096, bs=1                                                                                                                   
+    - Found: block_size=128, warps=4, vectorize=8 → 95% of peak bandwidth                                                                                                       
+                                                                                                                                                                                
+  Inductor max-autotune: searches a predefined grid                                                                                                                             
+    - block_sizes: [16, 32, 64, 128, 256]                                                                                                                                       
+    - num_warps: [2, 4, 8]                                                                                                                                                      
+    - num_stages: [1, 2, 3, 4]                                                                                                                                                  
+    → benchmarks all combinations, picks fastest                                                                                                                                
+    → may find 93% of peak, or may find 96% if hand-tuned was suboptimal                                                                                                        
+                                                                                                                                                                                
+  Inductor can actually beat a lazily hand-tuned kernel through autotuning, but rarely beats a carefully tuned one for the specific target shape.                               
+                                                                                                                                                                                
+  ---                                                                                                                                                                           
+  When Inductor-Generated Kernels Are LESS Efficient
+                                                    
+  ┌────────────────────────────┬────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────┐
+  │            Case            │                             Why Inductor Loses                             │                          How Much                           │     
+  ├────────────────────────────┼────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ FlashAttention / PagedAttn │ Algorithmic difference (tiling, online softmax)                            │ Cannot match — different complexity                         │     
+  ├────────────────────────────┼────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ FusedMoE (bs > 1)          │ Data-dependent routing; sparse gather/scatter not fuseable                 │ Significantly slower (that's why SGLang keeps forward_cuda) │     
+  ├────────────────────────────┼────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤     
+  │ Memory-bound decode (bs=1) │ In-place writes; hand-tuned vectorization for exact hidden_size            │ ~5-15% slower in practice                                   │     
+  ├────────────────────────────┼────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤     
+  │ AllReduce-fused norms      │ Cannot fuse across communication ops                                       │ Adds latency from extra sync                                │
+  ├────────────────────────────┼────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤     
+  │ FP8 quantized matmul       │ Custom kernels exploit hardware FP8 units; Inductor may use FP16 fallbacks │ Large gap on H100                                           │
+  └────────────────────────────┴────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────┘     
+                  
+  When Inductor-Generated Kernels Can WIN                                                                                                                                       
+                  
+  ┌───────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────┐                                             
+  │               Case                │                                     Why Inductor Wins                                     │
+  ├───────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Non-fused custom ops              │ Two separate custom kernels (e.g., norm + slice) fused into one by Inductor               │
+  ├───────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Poorly tuned hand-written kernels │ Autotuning finds better block/warp config than the manual choice                          │                                             
+  ├───────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────┤                                             
+  │ Novel fusion patterns             │ Inductor spots linear + gelu + linear as fuseable; no custom kernel exists                │                                             
+  ├───────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────┤                                             
+  │ Shape-specific small ops          │ At bs=1, hidden_size operations where the search finds a 1-warp kernel that fits in cache │
+  └───────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────┘                                             
+                  
+  ---                                                                                                                                                                           
+  Summary: The Fundamental Tradeoff
+
+  Hand-written custom ops:
+    + Algorithmic optimizations (FlashAttention, online softmax)                                                                                                                
+    + In-place semantics (less HBM)                                                                                                                                             
+    + Domain-specific tuning for target shapes                                                                                                                                  
+    + Cross-layer fusion (allreduce+norm)                                                                                                                                       
+    - Must be written manually for each op                                                                                                                                      
+    - Fixed to the shapes/patterns author anticipated                                                                                                                           
+                                                                                                                                                                                
+  Inductor-generated Triton:                                                                                                                                                    
+    + Automatically fuses PyTorch op sequences                                                                                                                                  
+    + Autotuning searches kernel configs                                                                                                                                        
+    + Works for any new op without manual work
+    - Cannot change algorithms (only fuses existing ones)                                                                                                                       
+    - Cannot write in-place (autograd safety)                                                                                                                                   
+    - Search space may miss optimal configs                                                                                                                                     
+    - Very slow to compile (max-autotune = benchmark every config)                                                                                                              
+                                                                                                                                                                                
+  This is exactly why SGLang's design is selective: use Inductor only for ops where it can win (RMSNorm, SiLU×Mul, RoPE at small bs), and keep custom kernels for ops where     
+  algorithm matters (attention, FusedMoE at bs>1). The CustomOp.enter_torch_compile() switch is the mechanism that enforces this selection at capture time.  
